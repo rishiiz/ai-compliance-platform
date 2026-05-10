@@ -1,38 +1,35 @@
 """Audit log / history API (read-only). Uses existing AuditLog model."""
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Query
 
-from app.database import get_db
-from app.models import AuditLog
+from app.models.audit_log import AuditLog
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
 @router.get("")
 def list_audit_log(
-    db: Session = Depends(get_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     entity_type: str | None = Query(None, description="Filter by entity_type"),
-    entity_id: int | None = Query(None, description="Filter by entity_id"),
+    entity_id: str | None = Query(None, description="Filter by entity_id"),
 ) -> list:
     """List recent audit log entries (history)."""
-    q = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
+    q = AuditLog.objects().order_by("-timestamp")
     if entity_type:
-        q = q.filter(AuditLog.entity_type == entity_type)
+        q = q.filter(entity_type=entity_type)
     if entity_id is not None:
-        q = q.filter(AuditLog.entity_id == entity_id)
-    rows = q.offset(offset).limit(limit).all()
+        q = q.filter(entity_id=entity_id)
+    rows = q.skip(offset).limit(limit)
     return [
         {
-            "id": r.id,
+            "id": str(r.id),
             "action_type": r.action_type,
             "entity_type": r.entity_type,
-            "entity_id": r.entity_id,
+            "entity_id": str(r.entity_id),
             "performed_by": r.performed_by,
             "timestamp": r.timestamp.isoformat() if r.timestamp else None,
-            "meta": r.meta,
+            "meta": r.meta_data,
         }
         for r in rows
     ]

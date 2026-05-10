@@ -5,9 +5,8 @@ import json
 import logging
 from typing import Any
 
-from sqlalchemy.orm import Session
-
-from app.models import Policy, Rule
+from app.models.policy import Policy
+from app.models.rule import Rule
 from app.services.external_db import get_external_engine
 from app.services.rule_engine import RuleExecutionError, execute_rule
 
@@ -32,8 +31,8 @@ def _rule_to_summary(rule: Rule) -> dict:
     """Serialize rule for compare response."""
     rd = rule.rule_data or {}
     return {
-        "id": rule.id,
-        "policy_id": rule.policy_id,
+        "id": str(rule.id),
+        "policy_id": str(rule.policy_id.id) if hasattr(rule.policy_id, 'id') else str(rule.policy_id),
         "rule_data": rd,
         "severity": rule.severity,
         "policy_clause_text": (rd.get("policy_clause_text") or "") if isinstance(rd, dict) else "",
@@ -41,48 +40,30 @@ def _rule_to_summary(rule: Rule) -> dict:
 
 
 def compare_policies(
-    db: Session,
-    old_policy_id: int,
-    new_policy_id: int,
+    db=None,
+    old_policy_id: str = None,
+    new_policy_id: str = None,
     compute_impact: bool = True,
 ) -> dict[str, Any]:
     """
     Compare two policies by rule set. Returns rule diff and optionally new_violations_count.
 
     Args:
-        db: Database session.
+        db: Database session (ignored for MongoEngine).
         old_policy_id: Policy ID for "old" version.
         new_policy_id: Policy ID for "new" version.
         compute_impact: If True and external DB is connected, run rules in only_in_new
                         and sum violating rows (estimated new violations if new policy adopted).
-
-    Returns:
-        {
-            "old_policy": { id, name, version },
-            "new_policy": { id, name, version },
-            "only_in_old": [ rule summaries ],
-            "only_in_new": [ rule summaries ],
-            "in_both": [ rule summaries ],
-            "impact": { "new_violations_count": int | None, "message": str }
-        }
     """
-    old_policy = db.query(Policy).filter(Policy.id == old_policy_id).first()
-    new_policy = db.query(Policy).filter(Policy.id == new_policy_id).first()
+    old_policy = Policy.objects(id=old_policy_id).first()
+    new_policy = Policy.objects(id=new_policy_id).first()
     if not old_policy:
         raise ValueError(f"Policy not found: id={old_policy_id}")
     if not new_policy:
         raise ValueError(f"Policy not found: id={new_policy_id}")
 
-    old_rules = (
-        db.query(Rule)
-        .filter(Rule.policy_id == old_policy_id)
-        .all()
-    )
-    new_rules = (
-        db.query(Rule)
-        .filter(Rule.policy_id == new_policy_id)
-        .all()
-    )
+    old_rules = Rule.objects(policy_id=old_policy.id)
+    new_rules = Rule.objects(policy_id=new_policy.id)
 
     old_keys = {}
     for r in old_rules:
@@ -100,7 +81,7 @@ def compare_policies(
     only_in_new = [v for k, v in new_keys.items() if k not in old_keys]
     in_both = [v for k, v in new_keys.items() if k in old_keys]
 
-    impact_new_violations: int | None = None
+    impact_new_violations = None
     impact_message = "Impact requires a connected external database."
     if compute_impact and only_in_new:
         engine = get_external_engine()
@@ -128,12 +109,12 @@ def compare_policies(
 
     return {
         "old_policy": {
-            "id": old_policy.id,
+            "id": str(old_policy.id),
             "name": old_policy.name,
             "version": old_policy.version,
         },
         "new_policy": {
-            "id": new_policy.id,
+            "id": str(new_policy.id),
             "name": new_policy.name,
             "version": new_policy.version,
         },

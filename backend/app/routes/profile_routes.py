@@ -4,11 +4,9 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func
-from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.models import AuditLog, User
+from app.models.audit_log import AuditLog
+from app.models.user import User
 from app.routes.auth_routes import get_current_user
 
 router = APIRouter(prefix="/profile", tags=["profile"])
@@ -27,37 +25,32 @@ def _start_of_month_utc() -> datetime:
 def track_action(
     body: TrackActionBody,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> dict:
     """Track the current user's action (e.g. report_viewed, export). Recorded per user."""
     if body.action_type not in ("report_viewed", "export"):
         return {"ok": True}
-    db.add(
-        AuditLog(
-            action_type=body.action_type,
-            entity_type="profile",
-            entity_id=current_user.id,
-            performed_by=current_user.email,
-        )
-    )
-    db.commit()
+    AuditLog(
+        action_type=body.action_type,
+        entity_type="profile",
+        entity_id=str(current_user.id),
+        performed_by=current_user.email,
+    ).save()
     return {"ok": True}
 
 
 @router.get("/metrics")
 def get_metrics(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> dict:
     """Activity metrics for the current user only: logins, reports_viewed, exports (this month)."""
     since = _start_of_month_utc()
-    q = (
-        db.query(AuditLog.action_type, func.count(AuditLog.id))
-        .filter(AuditLog.timestamp >= since, AuditLog.performed_by == current_user.email)
-        .group_by(AuditLog.action_type)
-    )
-    rows = q.all()
-    counts = {row[0]: row[1] for row in rows}
+    pipeline = [
+        {"$match": {"timestamp": {"$gte": since}, "performed_by": current_user.email}},
+        {"$group": {"_id": "$action_type", "count": {"$sum": 1}}}
+    ]
+    rows = list(AuditLog.objects.aggregate(pipeline))
+    counts = {row["_id"]: row["count"] for row in rows}
+    
     return {
         "logins": counts.get("login", 0),
         "reports_viewed": counts.get("report_viewed", 0),
@@ -68,28 +61,25 @@ def get_metrics(
 @router.get("/activity")
 def get_activity(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
     limit: int = Query(20, ge=1, le=100),
     hours: int = Query(24, ge=1, le=168),
 ) -> list:
     """Recent activity for the current user only. Default: last 24 hours."""
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
-    rows = (
-        db.query(AuditLog)
-        .filter(AuditLog.performed_by == current_user.email, AuditLog.timestamp >= since)
-        .order_by(AuditLog.timestamp.desc())
-        .limit(limit)
-        .all()
-    )
+    rows = AuditLog.objects(
+        performed_by=current_user.email, 
+        timestamp__gte=since
+    ).order_by("-timestamp").limit(limit)
+
     return [
         {
-            "id": r.id,
+            "id": str(r.id),
             "action_type": r.action_type,
             "entity_type": r.entity_type,
             "entity_id": r.entity_id,
             "performed_by": r.performed_by,
             "timestamp": r.timestamp.isoformat() if r.timestamp else None,
-            "meta": r.meta,
+            "meta": r.meta_data,
         }
         for r in rows
     ]

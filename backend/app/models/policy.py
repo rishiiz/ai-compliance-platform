@@ -1,32 +1,24 @@
 """Policy model."""
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, text
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-
-from app.database import Base
+from datetime import datetime, timezone
+import mongoengine as me
 
 
-class Policy(Base):
+class Policy(me.Document):
     """Policy table."""
+    meta = {'collection': 'policies'}
 
-    __tablename__ = "policies"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
-    version = Column(Integer, nullable=False, server_default="1")
-    is_active = Column(Boolean, nullable=False, server_default="1")
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
-    extracted_text = Column(Text, nullable=True)  # full policy text for RAG
+    name = me.StringField(max_length=255, required=True)
+    version = me.IntField(default=1, required=True)
+    is_active = me.BooleanField(default=True, required=True)
+    uploaded_at = me.DateTimeField(default=lambda: datetime.now(timezone.utc))
+    extracted_text = me.StringField(null=True)  # full policy text for RAG
 
     # ZIP upload tracking
-    source_zip = Column(String(512), nullable=True)   # original ZIP filename
-    storage_path = Column(String(1024), nullable=True) # Supabase Storage path
-
-    # One-to-many: one Policy has many Rules
-    rules = relationship(
-        "Rule",
-        back_populates="policy",
-        cascade="all, delete-orphan",
-    )
-
+    source_zip = me.StringField(max_length=512, null=True)   # original ZIP filename
+    storage_path = me.StringField(max_length=1024, null=True) # Supabase Storage path
+    
+    # In MongoEngine, we can either use a ListField(ReferenceField(Rule)) or
+    # let Rule point back to Policy. Pointing back to Policy is usually better 
+    # for large numbers of rules. We won't use cascade here since we can manually
+    # delete rules or use a pre_delete signal if needed.

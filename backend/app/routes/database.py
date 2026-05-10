@@ -3,12 +3,9 @@
 import logging
 
 from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-
-from app.database import get_db
-from app.models import AppSettings
+from app.models.app_settings import AppSettings
 from app.services.external_db import create_external_engine_from_credentials, get_external_engine
 from app.services.company_policy_search import get_company_policy_summary
 
@@ -20,7 +17,7 @@ _KEYS = ("external_db_host", "external_db_port", "external_db_user", "external_d
 
 
 def _save_connection_settings(
-    db: Session, host: str, port: int, user: str, db_name: str, dialect: str = "postgresql"
+    host: str, port: int, user: str, db_name: str, dialect: str = "postgresql"
 ) -> None:
     """Persist connection details (not password) so the UI can pre-fill and show status."""
     for key, value in [
@@ -30,28 +27,28 @@ def _save_connection_settings(
         ("external_db_name", db_name),
         ("external_db_dialect", dialect),
     ]:
-        row = db.query(AppSettings).filter(AppSettings.key == key).first()
+        row = AppSettings.objects(key=key).first()
         if row:
             row.value = value
+            row.save()
         else:
-            db.add(AppSettings(key=key, value=value))
-    db.commit()
+            AppSettings(key=key, value=value).save()
 
 
-def _get_connection_settings(db: Session) -> dict:
+def _get_connection_settings() -> dict:
     """Return saved host, port, user, db_name from AppSettings."""
-    rows = db.query(AppSettings).filter(AppSettings.key.in_(_KEYS)).all()
+    rows = AppSettings.objects(key__in=_KEYS)
     return {r.key: r.value for r in rows}
 
 
 @router.get("/status")
-def database_status(db: Session = Depends(get_db)) -> dict:
+def database_status() -> dict:
     """
     Return whether the external database is currently connected and last-used connection details.
     Used to pre-fill the connection form and show "Connected to host / db_name" after page reload.
     """
     engine = get_external_engine()
-    saved = _get_connection_settings(db)
+    saved = _get_connection_settings()
     return {
         "connected": engine is not None,
         "host": saved.get("external_db_host"),
@@ -74,7 +71,7 @@ class DatabaseConnectRequest(BaseModel):
 
 
 @router.post("/connect")
-def database_connect(body: DatabaseConnectRequest, db: Session = Depends(get_db)) -> dict:
+def database_connect(body: DatabaseConnectRequest) -> dict:
     """
     Connect to an external database using the provided credentials.
     Supports PostgreSQL and MySQL (and any dialect supported by SQLAlchemy).
@@ -108,7 +105,7 @@ def database_connect(body: DatabaseConnectRequest, db: Session = Depends(get_db)
             status_code=422,
             detail=f"Failed to connect to database: {e}",
         ) from e
-    _save_connection_settings(db, body.host, port, body.username, body.db_name, dialect)
+    _save_connection_settings(body.host, port, body.username, body.db_name, dialect)
     logger.info(
         "Database connected | host=%s | db_name=%s | user=%s | dialect=%s",
         body.host,
@@ -120,12 +117,12 @@ def database_connect(body: DatabaseConnectRequest, db: Session = Depends(get_db)
 
 
 @router.get("/company-data")
-def database_company_data(db: Session = Depends(get_db)) -> dict:
+def database_company_data() -> dict:
     """
     Return connection status (username, host, db_name) and fetched data from the company
     database (policy_documents count and list). Used by the dashboard after connect.
     """
-    saved = _get_connection_settings(db)
+    saved = _get_connection_settings()
     engine = get_external_engine()
     connected = engine is not None
     out = {

@@ -1,32 +1,15 @@
 """Rule model."""
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-
-from app.database import Base
+from datetime import datetime, timezone
+import mongoengine as me
+from app.models.policy import Policy
 
 
-class Rule(Base):
+class Rule(me.Document):
     """Rule table."""
+    meta = {'collection': 'rules'}
 
-    __tablename__ = "rules"
-
-    id = Column(Integer, primary_key=True, index=True)
-    policy_id = Column(
-        Integer,
-        ForeignKey("policies.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    rule_data = Column(JSON, nullable=False)
-    severity = Column(String(64), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Many-to-one: Rule belongs to Policy
-    policy = relationship("Policy", back_populates="rules")
-    # One-to-many: one Rule has many Violations
-    violations = relationship(
-        "Violation",
-        back_populates="rule",
-        cascade="all, delete-orphan",
-    )
+    policy_id = me.ReferenceField(Policy, required=True, reverse_delete_rule=me.CASCADE)
+    rule_data = me.DictField(required=True)
+    severity = me.StringField(max_length=64, required=True)
+    created_at = me.DateTimeField(default=lambda: datetime.now(timezone.utc))

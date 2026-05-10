@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     COMPANY_POLICY_TITLE_COLUMN: str = ""  # optional; if set, included in context
     COMPANY_POLICY_SEARCH_LIMIT: int = 10
 
-    # File storage: Supabase (optional) or app database (MySQL/PostgreSQL). When Supabase not set, files stored in policy_file_storage table.
+    # File storage: Supabase (optional) or app database (MongoDB). When Supabase not set, files stored in policy_file_storage collection.
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
     SUPABASE_STORAGE_BUCKET: str = "policy-files"

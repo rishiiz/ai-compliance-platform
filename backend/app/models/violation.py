@@ -1,52 +1,29 @@
 """Violation model."""
 
-from sqlalchemy import (
-    CheckConstraint,
-    Column,
-    DateTime,
-    ForeignKey,
-    Integer,
-    JSON,
-    String,
-    Text,
-    UniqueConstraint,
-    text,
-)
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-
-from app.database import Base
+from datetime import datetime, timezone
+# pyrefly: ignore [missing-import]
+import mongoengine as me
+from app.models.rule import Rule
 
 
-class Violation(Base):
+class Violation(me.Document):
     """Violation table."""
+    meta = {
+        'collection': 'violations',
+        'indexes': [
+            {'fields': ['rule_id', 'record_id'], 'unique': True}
+        ]
+    }
 
-    __tablename__ = "violations"
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('pending', 'approved', 'dismissed', 'resolved')",
-            name="violation_status_check",
-        ),
-        UniqueConstraint(
-            "rule_id",
-            "record_id",
-            name="uq_violation_rule_record",
-        ),
-    )
-
-    id = Column(Integer, primary_key=True, index=True)
-    rule_id = Column(Integer, ForeignKey("rules.id", ondelete="CASCADE"), nullable=False)
-    record_id = Column(String(255), nullable=False)
-    evidence_snapshot = Column(JSON, nullable=False)
-    sql_query = Column(Text, nullable=False)
-    explanation = Column(Text, nullable=False)
-    suggested_remediation = Column(Text, nullable=True)
-    policy_clause_text = Column(Text, nullable=True)
-    status = Column(String(20), nullable=False, server_default=text("'pending'"))
-    reviewer_notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    detected_at = Column(DateTime(timezone=True), server_default=func.now())
-    resolved_at = Column(DateTime(timezone=True), nullable=True)
-
-    # Many-to-one: Violation belongs to Rule
-    rule = relationship("Rule", back_populates="violations")
+    rule_id = me.ReferenceField(Rule, required=True, reverse_delete_rule=me.CASCADE)
+    record_id = me.StringField(max_length=255, required=True)
+    evidence_snapshot = me.DictField(required=True)
+    sql_query = me.StringField(required=True)
+    explanation = me.StringField(required=True)
+    suggested_remediation = me.StringField(null=True)
+    policy_clause_text = me.StringField(null=True)
+    status = me.StringField(max_length=20, default='pending', choices=('pending', 'approved', 'dismissed', 'resolved'))
+    reviewer_notes = me.StringField(null=True)
+    created_at = me.DateTimeField(default=lambda: datetime.now(timezone.utc))
+    detected_at = me.DateTimeField(default=lambda: datetime.now(timezone.utc))
+    resolved_at = me.DateTimeField(null=True)

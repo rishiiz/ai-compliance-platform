@@ -1,11 +1,9 @@
 """User management (admin)."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.models import User
+from app.models.user import User
 from app.utils.password import hash_password
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -13,7 +11,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 def _user_to_item(u: User) -> dict:
     return {
-        "id": u.id,
+        "id": str(u.id),
         "email": u.email,
         "name": u.name,
         "role": u.role,
@@ -24,9 +22,9 @@ def _user_to_item(u: User) -> dict:
 
 
 @router.get("")
-def list_users(db: Session = Depends(get_db)) -> list:
+def list_users() -> list:
     """List all users (admin)."""
-    users = db.query(User).order_by(User.email).all()
+    users = User.objects().order_by("email")
     return [_user_to_item(u) for u in users]
 
 
@@ -39,9 +37,9 @@ class CreateUserRequest(BaseModel):
 
 
 @router.post("")
-def create_user(body: CreateUserRequest, db: Session = Depends(get_db)) -> dict:
+def create_user(body: CreateUserRequest) -> dict:
     """Add a user (admin). Optional password sets their login password."""
-    existing = db.query(User).filter(User.email == body.email.strip().lower()).first()
+    existing = User.objects(email=body.email.strip().lower()).first()
     if existing:
         raise HTTPException(status_code=400, detail="User with this email already exists")
     role = body.role.strip() if body.role else "Viewer"
@@ -55,9 +53,7 @@ def create_user(body: CreateUserRequest, db: Session = Depends(get_db)) -> dict:
         department=body.department.strip() if body.department else None,
         password_hash=password_hash,
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    user.save()
     return _user_to_item(user)
 
 
@@ -66,32 +62,30 @@ class SetPasswordRequest(BaseModel):
 
 
 @router.patch("/{user_id}/password")
-def set_user_password(user_id: int, body: SetPasswordRequest, db: Session = Depends(get_db)) -> dict:
+def set_user_password(user_id: str, body: SetPasswordRequest) -> dict:
     """Set or reset a user's login password (admin)."""
-    user = db.query(User).filter(User.id == user_id).first()
+    user = User.objects(id=user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not body.password or not body.password.strip():
         raise HTTPException(status_code=400, detail="Password required")
     user.password_hash = hash_password(body.password.strip())
-    db.commit()
-    db.refresh(user)
+    user.save()
     return _user_to_item(user)
 
 
 @router.delete("/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db)) -> dict:
+def delete_user(user_id: str) -> dict:
     """Delete a user (admin only). Cannot delete the last Admin."""
-    user = db.query(User).filter(User.id == user_id).first()
+    user = User.objects(id=user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.role == "Admin":
-        admin_count = db.query(User).filter(User.role == "Admin").count()
+        admin_count = User.objects(role="Admin").count()
         if admin_count <= 1:
             raise HTTPException(
                 status_code=400,
                 detail="Cannot delete the last admin. Add another admin first.",
             )
-    db.delete(user)
-    db.commit()
+    user.delete()
     return {"ok": True, "id": user_id}

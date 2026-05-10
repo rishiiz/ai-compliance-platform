@@ -1,24 +1,20 @@
 """RAG chunks stored in the app database when RAG_STORAGE_BACKEND=mysql."""
 
-from sqlalchemy import Column, DateTime, Integer, Text
-from sqlalchemy.sql import func
-
-from app.database import Base
+from datetime import datetime, timezone
+import mongoengine as me
 
 
-class RagChunk(Base):
+class RagChunk(me.Document):
     """
-    Policy text chunks and embeddings for RAG when using MySQL (or any app DB) instead of Chroma.
+    Policy text chunks and embeddings for RAG when using MongoDB (or any app DB) instead of Chroma.
     embedding_json: JSON array of floats, e.g. "[0.1, -0.2, ...]".
     """
+    meta = {'collection': 'rag_chunks'}
 
-    __tablename__ = "rag_chunks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    policy_id = Column(Integer, nullable=False, index=True)
-    chunk_index = Column(Integer, nullable=False)
-    content = Column(Text, nullable=False)
-    embedding_json = Column(Text, nullable=False)  # JSON array of float
-    policy_name = Column(Text, nullable=True)
-    is_summary = Column(Integer, nullable=False, default=0)  # 0/1 for MySQL compatibility
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    policy_id = me.StringField(required=True)
+    chunk_index = me.IntField(required=True)
+    content = me.StringField(required=True)
+    embedding_json = me.StringField(required=True)  # JSON array of float
+    policy_name = me.StringField(null=True)
+    is_summary = me.IntField(default=0, required=True)  # 0/1
+    created_at = me.DateTimeField(default=lambda: datetime.now(timezone.utc))

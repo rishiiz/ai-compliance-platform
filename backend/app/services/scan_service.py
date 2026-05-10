@@ -4,9 +4,8 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy.orm import Session
-
-from app.models import Rule, Violation
+from app.models.rule import Rule
+from app.models.violation import Violation
 from app.services.explanation_service import (
     generate_remediation_suggestion,
     generate_violation_explanation,
@@ -37,7 +36,7 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def run_scan(db: Session) -> dict:
+def run_scan(db=None) -> dict:
     """
     Run full compliance scan: execute all rules, upsert violations (new or update existing),
     mark violations as resolved when no longer present in current results.
@@ -45,7 +44,7 @@ def run_scan(db: Session) -> dict:
     Returns:
         Dict with rules_checked, total_violations, resolved_count, by_rule.
     """
-    rules = db.query(Rule).all()
+    rules = Rule.objects()
     if not rules:
         logger.info("Scan skipped: no rules to run")
         return {
@@ -75,14 +74,14 @@ def run_scan(db: Session) -> dict:
             if "does not exist" in msg or "undefinedtable" in msg or "relation" in msg or "column" in msg:
                 logger.warning(
                     "Skipping rule (table/column missing in company DB) | rule_id=%s | entity=%s | error=%s",
-                    rule.id,
+                    str(rule.id),
                     rule_data.get("entity"),
                     str(e),
                 )
                 continue
             logger.error(
                 "Rule execution failed | rule_id=%s | entity=%s | error=%s",
-                rule.id,
+                str(rule.id),
                 rule_data.get("entity"),
                 str(e),
                 exc_info=True,
@@ -93,7 +92,7 @@ def run_scan(db: Session) -> dict:
         rows_scanned = get_entity_count(rule_data)
         logger.info(
             "Rule executed | rule_id=%s | entity=%s | execution_time_ms=%s | rows_scanned=%s | rows_violated=%s",
-            rule.id,
+            str(rule.id),
             rule_data.get("entity"),
             execution_time_ms,
             rows_scanned,
@@ -107,13 +106,14 @@ def run_scan(db: Session) -> dict:
         )
         current_record_ids = set()
         count = 0
+        policy_id_str = str(rule.policy_id.id) if hasattr(rule.policy_id, 'id') else str(rule.policy_id)
 
         for row in rows:
             record_id = _record_id_from_row(row)
             current_record_ids.add(record_id)
             try:
                 explanation = generate_violation_explanation(
-                    rule_data, row, sql_query, policy_id=rule.policy_id
+                    rule_data, row, sql_query, policy_id=policy_id_str
                 )
             except Exception:
                 explanation = (
@@ -122,19 +122,12 @@ def run_scan(db: Session) -> dict:
                 )
             try:
                 suggested_remediation = generate_remediation_suggestion(
-                    rule_data, row, explanation, policy_id=rule.policy_id
+                    rule_data, row, explanation, policy_id=policy_id_str
                 )
             except Exception:
                 suggested_remediation = None
 
-            existing = (
-                db.query(Violation)
-                .filter(
-                    Violation.rule_id == rule.id,
-                    Violation.record_id == record_id,
-                )
-                .first()
-            )
+            existing = Violation.objects(rule_id=rule.id, record_id=record_id).first()
             if existing:
                 existing.evidence_snapshot = row
                 existing.sql_query = sql_query
@@ -145,6 +138,7 @@ def run_scan(db: Session) -> dict:
                 if existing.status == "resolved":
                     existing.status = "pending"
                     existing.resolved_at = None
+                existing.save()
                 count += 1
             else:
                 violation = Violation(
@@ -158,26 +152,25 @@ def run_scan(db: Session) -> dict:
                     status="pending",
                     detected_at=_now_utc(),
                 )
-                db.add(violation)
+                violation.save()
                 count += 1
 
         # Mark resolved: violations for this rule with record_id not in current results
-        q = db.query(Violation).filter(
-            Violation.rule_id == rule.id,
-            Violation.status.in_(["pending", "approved", "dismissed"]),
+        to_resolve = Violation.objects(
+            rule_id=rule.id, 
+            status__in=["pending", "approved", "dismissed"],
+            record_id__nin=list(current_record_ids) if current_record_ids else []
         )
-        if current_record_ids:
-            q = q.filter(Violation.record_id.notin_(current_record_ids))
-        to_resolve = q.all()
         now = _now_utc()
         for v in to_resolve:
             v.status = "resolved"
             v.resolved_at = now
+            v.save()
             resolved_count += 1
 
         total_violations += count
         by_rule.append({
-            "rule_id": rule.id,
+            "rule_id": str(rule.id),
             "violations": count,
             "execution_time_ms": execution_time_ms,
             "rows_scanned": rows_scanned,

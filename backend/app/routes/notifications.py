@@ -1,26 +1,18 @@
 """Notifications API (bell dropdown)."""
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
 
-from app.database import get_db
-from app.models import Notification
+from app.models.notification import Notification
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
 @router.get("")
 def list_notifications(
-    db: Session = Depends(get_db),
     limit: int = 50,
 ) -> list:
     """List notifications (e.g. for header dropdown)."""
-    rows = (
-        db.query(Notification)
-        .order_by(Notification.created_at.desc())
-        .limit(limit)
-        .all()
-    )
+    rows = Notification.objects().order_by("-created_at").limit(limit)
     return [
         {
             "id": str(r.id),
@@ -36,14 +28,12 @@ def list_notifications(
 
 @router.patch("/{notification_id}/read")
 def mark_read(
-    notification_id: int,
-    db: Session = Depends(get_db),
+    notification_id: str,
 ) -> dict:
     """Mark a notification as read."""
-    n = db.query(Notification).filter(Notification.id == notification_id).first()
+    n = Notification.objects(id=notification_id).first()
     if not n:
         raise HTTPException(status_code=404, detail="Notification not found")
     n.read = True
-    db.commit()
-    db.refresh(n)
-    return {"id": n.id, "read": True}
+    n.save()
+    return {"id": str(n.id), "read": True}

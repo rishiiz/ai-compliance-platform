@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { SidebarContext, useSidebar } from "@/components/layout/sidebar-context";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { AskQuestionFloating } from "@/components/layout/ask-question-floating";
-import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 
 function AppLayoutInner({ children }: { children: React.ReactNode }) {
@@ -31,8 +30,6 @@ export default function AppGroupLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, isLoading } = useAuth();
-  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
 
@@ -40,29 +37,10 @@ export default function AppGroupLayout({
     setCollapsed(true);
   }, [pathname]);
 
-  useEffect(() => {
-    if (isLoading) return;
-    if (!user) {
-      router.replace("/login");
-    }
-  }, [user, isLoading, router]);
-
   const sidebarValue = useMemo(
     () => ({ collapsed, setCollapsed }),
     [collapsed]
   );
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return null;
-  }
 
   return (
     <SidebarContext.Provider value={sidebarValue}>

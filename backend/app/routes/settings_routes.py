@@ -1,25 +1,23 @@
 """App settings API (system, notifications, policy, user prefs)."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.models import AppSettings
+from app.models.app_settings import AppSettings
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
-def _get_all_settings(db: Session) -> dict:
+def _get_all_settings() -> dict:
     """Return all settings as key-value dict."""
-    rows = db.query(AppSettings).all()
+    rows = AppSettings.objects()
     return {r.key: r.value for r in rows}
 
 
 @router.get("")
-def get_settings(db: Session = Depends(get_db)) -> dict:
+def get_settings() -> dict:
     """Get all app settings (scan_frequency, severity_threshold, etc.)."""
-    return _get_all_settings(db)
+    return _get_all_settings()
 
 
 class SettingsUpdate(BaseModel):
@@ -39,16 +37,15 @@ class SettingsUpdate(BaseModel):
 @router.patch("")
 def update_settings(
     body: SettingsUpdate,
-    db: Session = Depends(get_db),
 ) -> dict:
     """Update settings (only provided keys)."""
     updates = body.model_dump(exclude_none=True)
     for key, value in updates.items():
-        row = db.query(AppSettings).filter(AppSettings.key == key).first()
+        row = AppSettings.objects(key=key).first()
         str_val = str(value).lower() if isinstance(value, bool) else str(value)
         if row:
             row.value = str_val
+            row.save()
         else:
-            db.add(AppSettings(key=key, value=str_val))
-    db.commit()
-    return _get_all_settings(db)
+            AppSettings(key=key, value=str_val).save()
+    return _get_all_settings()

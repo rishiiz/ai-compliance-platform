@@ -8,7 +8,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
+from pymongo.errors import PyMongoError
+from mongoengine.connection import get_connection
 
 try:
     from openai import APIError as OpenAIAPIError
@@ -16,7 +17,7 @@ except ImportError:
     OpenAIAPIError = None  # openai package may use different export path
 
 from app.config import settings
-from app.database import engine as main_engine, init_db
+from app.database import init_db
 from app.scheduler import get_scheduler
 from app.services.external_db import get_external_engine
 from app.utils.logging_config import setup_logging
@@ -62,8 +63,8 @@ def _error_response(
     return body
 
 
-async def database_exception_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
-    """Handle database/SQLAlchemy errors. Log and return structured JSON."""
+async def database_exception_handler(request: Request, exc: PyMongoError) -> JSONResponse:
+    """Handle database errors. Log and return structured JSON."""
     logger.exception("Database error: %s", exc)
     return JSONResponse(
         status_code=503,
@@ -166,7 +167,7 @@ app.add_middleware(
 )
 
 # Global exception handlers: structured JSON + logging
-app.add_exception_handler(SQLAlchemyError, database_exception_handler)
+app.add_exception_handler(PyMongoError, database_exception_handler)
 if OpenAIAPIError is not None:
     app.add_exception_handler(OpenAIAPIError, openai_exception_handler)
 app.add_exception_handler(RuleExtractionError, rule_extraction_exception_handler)
@@ -190,10 +191,10 @@ app.include_router(metrics_routes.router)
 
 
 def _check_main_database() -> dict:
-    """Check main PostgreSQL connection. Returns {status, message}."""
+    """Check main MongoDB connection. Returns {status, message}."""
     try:
-        with main_engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+        conn = get_connection()
+        conn.admin.command('ping')
         return {"status": "ok", "message": "Connected"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -242,7 +243,7 @@ def _check_scheduler() -> dict:
 def health_check() -> Response:
     """
     Health check endpoint.
-    Checks: main PostgreSQL, external DB (if configured), Groq API key, OpenAI (optional), scheduler.
+    Checks: main MongoDB, external DB (if configured), Groq API key, OpenAI (optional), scheduler.
     Groq-only: GROQ_API_KEY required for LLM; RAG uses local embeddings (no OpenAI).
     HTTP 200 for ok/degraded, 503 for unhealthy.
     """

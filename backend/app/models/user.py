@@ -1,22 +1,18 @@
 """User model for auth, profile, 2FA, and user management."""
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String
-from sqlalchemy.sql import func
-
-from app.database import Base
+from datetime import datetime, timezone
+import mongoengine as me
 
 
-class User(Base):
+class User(me.Document):
     """Users for login, profile, and 2FA."""
+    meta = {'collection': 'users'}
 
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(255), unique=True, nullable=False, index=True)
-    name = Column(String(255), nullable=False)
-    role = Column(String(64), nullable=False)  # Admin, Compliance Officer, Viewer
-    department = Column(String(128), nullable=True)
-    password_hash = Column(String(255), nullable=True)  # optional for demo
-    two_fa_secret = Column(String(64), nullable=True)
-    two_fa_enabled = Column(Boolean, nullable=False, server_default="0")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    email = me.StringField(max_length=255, unique=True, required=True)
+    name = me.StringField(max_length=255, required=True)
+    role = me.StringField(max_length=64, required=True)  # Admin, Compliance Officer, Viewer
+    department = me.StringField(max_length=128, null=True)
+    password_hash = me.StringField(max_length=255, null=True)  # optional for demo
+    two_fa_secret = me.StringField(max_length=64, null=True)
+    two_fa_enabled = me.BooleanField(default=False)
+    created_at = me.DateTimeField(default=lambda: datetime.now(timezone.utc))

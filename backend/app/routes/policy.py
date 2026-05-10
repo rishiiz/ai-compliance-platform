@@ -13,12 +13,15 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func
-from sqlalchemy.orm import Session
 
+from mongoengine import Q
 from app.config import settings
-from app.database import get_db
-from app.models import AppSettings, AuditLog, Notification, Policy, Rule, User
+from app.models.app_settings import AppSettings
+from app.models.audit_log import AuditLog
+from app.models.notification import Notification
+from app.models.policy import Policy
+from app.models.rule import Rule
+from app.models.user import User
 from app.schemas.rule_data import validate_rule_data
 from app.services.zip_policy_service import ALLOWED_EXTENSIONS, extract_text_from_policy_file
 from app.services.policy_compare import compare_policies
@@ -40,17 +43,17 @@ logger = logging.getLogger(__name__)
 # Upload: run RAG index + rule extraction in parallel with this timeout (seconds)
 UPLOAD_PROCESS_TIMEOUT = 120
 
-_rag_ask_timestamps: dict[int, list[float]] = {}
+_rag_ask_timestamps: dict[str, list[float]] = {}
 RAG_ASK_WINDOW_SEC = 3600
 
 
 class PolicyAskRequest(BaseModel):
     """Request body for Ask policy (RAG Q&A)."""
     query: str
-    policy_id: int | None = None
+    policy_id: str | None = None
 
 
-def _rag_ask_rate_limit_check(user_id: int) -> None:
+def _rag_ask_rate_limit_check(user_id: str) -> None:
     """Raise HTTPException 429 if user exceeded RAG Ask rate limit in the last hour."""
     limit = getattr(settings, "RAG_ASK_RATE_LIMIT_PER_HOUR", 60)
     if limit <= 0:
@@ -75,9 +78,9 @@ DEFAULT_MAX_UPLOADS_PER_HOUR = int(os.environ.get("POLICY_UPLOAD_MAX_PER_HOUR", 
 CHUNK_SIZE = 1024 * 1024  # 1 MB for streaming read
 
 
-def _get_int_setting(db: Session, key: str, default: int) -> int:
+def _get_int_setting(key: str, default: int) -> int:
     """Get integer setting from AppSettings by key, or default if missing/invalid."""
-    row = db.query(AppSettings).filter(AppSettings.key == key).first()
+    row = AppSettings.objects(key=key).first()
     if not row or not row.value:
         return default
     try:
@@ -88,9 +91,10 @@ def _get_int_setting(db: Session, key: str, default: int) -> int:
 
 def _rule_to_response(rule: Rule) -> dict:
     """Serialize a Rule model to a JSON-suitable dict."""
+    policy = getattr(rule, 'policy_id', None)
     return {
-        "id": rule.id,
-        "policy_id": rule.policy_id,
+        "id": str(rule.id),
+        "policy_id": str(policy.id) if hasattr(policy, 'id') else str(policy) if policy else None,
         "rule_data": rule.rule_data,
         "severity": rule.severity,
         "created_at": rule.created_at.isoformat() if rule.created_at else None,
@@ -98,15 +102,14 @@ def _rule_to_response(rule: Rule) -> dict:
 
 
 @router.get("/compare")
-def policy_compare(
-    old_policy_id: int = Query(..., description="Policy ID for old version"),
-    new_policy_id: int = Query(..., description="Policy ID for new version"),
+def policy_compare_route(
+    old_policy_id: str = Query(..., description="Policy ID for old version"),
+    new_policy_id: str = Query(..., description="Policy ID for new version"),
     compute_impact: bool = Query(True, description="Compute new violations count if DB connected"),
-    db: Session = Depends(get_db),
 ) -> dict:
     """Compare two policy versions: rule diff (only in old, only in new, in both) and optional impact count."""
     try:
-        return compare_policies(db, old_policy_id, new_policy_id, compute_impact=compute_impact)
+        return compare_policies(old_policy_id, new_policy_id, compute_impact=compute_impact)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -156,7 +159,7 @@ Do NOT use prior knowledge. If the content does not contain the answer, respond 
 
 def _do_ask_sync(
     cleaned: str,
-    policy_id: int | None,
+    policy_id: str | None,
     fallback_policies: list[dict],
     use_summaries_only: bool = False,
 ) -> tuple[str, list[dict] | None, float, float, int, int | None]:
@@ -329,7 +332,7 @@ def _do_ask_sync(
 
 def _stream_ask_sync_producer(
     cleaned: str,
-    policy_id: int | None,
+    policy_id: str | None,
     fallback_policies: list[dict],
     out_queue: queue.Queue[str | None],
     use_summaries_only: bool = False,
@@ -428,7 +431,6 @@ def _stream_ask_sync_producer(
 @router.post("/ask", response_model=None)
 async def policy_ask(
     body: PolicyAskRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     stream: bool = Query(False, description="Stream response as SSE"),
 ) -> dict | StreamingResponse:
@@ -446,7 +448,7 @@ async def policy_ask(
             status_code=400,
             detail="Query is required and must be non-empty after sanitization.",
         )
-    _rag_ask_rate_limit_check(current_user.id)
+    _rag_ask_rate_limit_check(str(current_user.id))
 
     from app.services import rag_cache
 
@@ -455,13 +457,10 @@ async def policy_ask(
         if cached is not None:
             return {"answer": cached}
 
-    policies_with_text = (
-        db.query(Policy)
-        .filter(Policy.extracted_text.isnot(None), Policy.extracted_text != "")
-    )
+    policies_with_text_qs = Policy.objects(Q(extracted_text__ne=None) & Q(extracted_text__ne=""))
     if body.policy_id is not None:
-        policies_with_text = policies_with_text.filter(Policy.id == body.policy_id)
-    policies_with_text = policies_with_text.all()
+        policies_with_text_qs = policies_with_text_qs.filter(id=body.policy_id)
+    policies_with_text = list(policies_with_text_qs)
     fallback_policies = [{"name": p.name, "text": (p.extracted_text or "").strip()} for p in policies_with_text if (p.extracted_text or "").strip()]
     use_summaries_only = getattr(settings, "RAG_USE_SUMMARIES", False) and len(cleaned.split()) <= 6
 
@@ -498,7 +497,6 @@ async def policy_ask(
 
 @router.post("/reindex")
 def policy_reindex(
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """
@@ -506,14 +504,10 @@ def policy_reindex(
     Use this to backfill the index for policies uploaded before RAG or when indexing failed at upload.
     """
     logger.info("RAG reindex requested")
-    policies_with_text = (
-        db.query(Policy)
-        .filter(Policy.extracted_text.isnot(None), Policy.extracted_text != "")
-        .all()
-    )
+    policies_with_text = list(Policy.objects(Q(extracted_text__ne=None) & Q(extracted_text__ne="")))
     indexed = 0
     for i, p in enumerate(policies_with_text):
-        ok = index_policy_chunks(p.extracted_text, p.id, p.name)
+        ok = index_policy_chunks(p.extracted_text, str(p.id), p.name)
         if ok:
             indexed += 1
         logger.info("RAG policy %s/%s: policy_id=%s name=%s ok=%s", i + 1, len(policies_with_text), p.id, p.name, ok)
@@ -529,18 +523,13 @@ def policy_reindex(
 
 @router.get("/rag-status")
 def policy_rag_status(
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """
     Return RAG index status: indexed_count and total policies with text.
     Used by Ask policy page to show status and optionally auto-trigger reindex.
     """
-    total_with_text = (
-        db.query(Policy)
-        .filter(Policy.extracted_text.isnot(None), Policy.extracted_text != "")
-        .count()
-    )
+    total_with_text = Policy.objects(Q(extracted_text__ne=None) & Q(extracted_text__ne="")).count()
     indexed_count = get_indexed_count()
     status = get_rag_status()
     return {
@@ -552,21 +541,17 @@ def policy_rag_status(
 
 
 @router.get("")
-def list_policies(db: Session = Depends(get_db)) -> list:
+def list_policies() -> list:
     """List all policies with rules count."""
-    policies = (
-        db.query(Policy)
-        .order_by(Policy.uploaded_at.desc())
-        .all()
-    )
+    policies = Policy.objects().order_by("-uploaded_at")
     return [
         {
-            "id": p.id,
+            "id": str(p.id),
             "name": p.name,
             "version": p.version,
             "is_active": p.is_active,
-            "uploaded_at": p.uploaded_at.isoformat() if p.uploaded_at else None,
-            "rules_count": db.query(Rule).filter(Rule.policy_id == p.id).count(),
+            "uploaded_at": p.uploaded_at.isoformat() if hasattr(p, 'uploaded_at') and p.uploaded_at else None,
+            "rules_count": Rule.objects(policy_id=p.id).count(),
         }
         for p in policies
     ]
@@ -575,7 +560,6 @@ def list_policies(db: Session = Depends(get_db)) -> list:
 @router.post("/upload")
 async def upload_policy(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
 ) -> list[dict]:
     """
     Upload a policy file (PDF, CSV, or TXT), extract text, extract rules, store policy
@@ -592,17 +576,13 @@ async def upload_policy(
         )
 
     # Rate limit: max successful uploads per hour (global)
-    max_per_hour = _get_int_setting(db, "policy_upload_max_per_hour", DEFAULT_MAX_UPLOADS_PER_HOUR)
+    max_per_hour = _get_int_setting("policy_upload_max_per_hour", DEFAULT_MAX_UPLOADS_PER_HOUR)
     if max_per_hour > 0:
         since = datetime.now(timezone.utc) - timedelta(hours=1)
-        count = (
-            db.query(AuditLog)
-            .filter(
-                AuditLog.action_type == "policy_uploaded",
-                AuditLog.timestamp >= since,
-            )
-            .count()
-        )
+        count = AuditLog.objects(
+            action_type="policy_uploaded",
+            timestamp__gte=since,
+        ).count()
         if count >= max_per_hour:
             logger.warning("Policy upload rate limit exceeded | count=%s | limit=%s", count, max_per_hour)
             raise HTTPException(
@@ -611,7 +591,7 @@ async def upload_policy(
             )
 
     # Per-file size limit (configurable MB)
-    max_mb = _get_int_setting(db, "policy_upload_max_file_size_mb", DEFAULT_MAX_FILE_SIZE_MB)
+    max_mb = _get_int_setting("policy_upload_max_file_size_mb", DEFAULT_MAX_FILE_SIZE_MB)
     max_bytes = max_mb * 1024 * 1024
     chunks: list[bytes] = []
     total = 0
@@ -638,29 +618,23 @@ async def upload_policy(
 
     policy_name = Path(file.filename or "policy.pdf").stem
     # Same name: increment version and mark previous versions inactive
-    existing = (
-        db.query(Policy).filter(Policy.name == policy_name).all()
-    )
+    existing = Policy.objects(name=policy_name)
     if existing:
-        max_version = db.query(func.max(Policy.version)).filter(
-            Policy.name == policy_name
-        ).scalar() or 0
+        max_version = max([p.version for p in existing]) if existing else 0
         new_version = max_version + 1
         for p in existing:
             p.is_active = False
+            p.save()
         policy = Policy(name=policy_name, version=new_version, is_active=True)
     else:
         policy = Policy(name=policy_name, version=1, is_active=True)
-    db.add(policy)
-    db.flush()
-
-    # Persist policy text for RAG and index in vector store
     policy.extracted_text = text
+    policy.save()
 
     # Wait only for rule extraction so upload returns quickly; RAG indexing runs in background
     rule_dicts: list[dict] = []
     with ThreadPoolExecutor(max_workers=1) as executor:
-        future_rules = executor.submit(extract_rules_from_text, text, policy.id)
+        future_rules = executor.submit(extract_rules_from_text, text, str(policy.id))
         try:
             rule_dicts = future_rules.result(timeout=UPLOAD_PROCESS_TIMEOUT)
         except FuturesTimeoutError:
@@ -686,49 +660,43 @@ async def upload_policy(
                 detail=f"Rule at index {i} failed validation: {e}",
             ) from e
 
+    stored_rules = []
     for rd in validated_rules:
         severity = rd.get("severity") or "medium"
         rule = Rule(
-            policy_id=policy.id,
+            policy_id=policy,
             rule_data=rd,
             severity=severity,
         )
-        db.add(rule)
+        rule.save()
+        stored_rules.append(rule)
 
-    db.flush()
     # Index policy in RAG in background so upload response returns quickly (rules already loaded)
     def _index_in_background() -> None:
         try:
-            index_policy_chunks(text, policy.id, policy_name)
+            index_policy_chunks(text, str(policy.id), policy_name)
         except Exception as e:
             logger.warning("RAG background index failed for policy_id=%s: %s", policy.id, e)
     threading.Thread(target=_index_in_background, daemon=True).start()
 
-    stored_rules = (
-        db.query(Rule).filter(Rule.policy_id == policy.id).order_by(Rule.id).all()
-    )
-    db.add(
-        AuditLog(
-            action_type="policy_uploaded",
-            entity_type="policy",
-            entity_id=policy.id,
-            performed_by="system",
-            meta={
-                "policy_name": policy_name,
-                "filename": file.filename,
-                "rules_count": len(stored_rules),
-            },
-        )
-    )
-    db.add(
-        Notification(
-            type="success",
-            title="Policy uploaded",
-            body=f'"{policy_name}" uploaded with {len(stored_rules)} rules extracted.',
-            read=False,
-        )
-    )
-    db.commit()
+    AuditLog(
+        action_type="policy_uploaded",
+        entity_type="policy",
+        entity_id=str(policy.id),
+        performed_by="system",
+        meta_data={
+            "policy_name": policy_name,
+            "filename": file.filename,
+            "rules_count": len(stored_rules),
+        },
+    ).save()
+    Notification(
+        type="success",
+        title="Policy uploaded",
+        body=f'"{policy_name}" uploaded with {len(stored_rules)} rules extracted.',
+        read=False,
+    ).save()
+    
     logger.info(
         "Policy upload completed | policy_name=%s | policy_id=%s | version=%s | rules_count=%s",
         policy_name,
@@ -753,7 +721,7 @@ class ZipUploadResult(BaseModel):
     summary: str
     issues: list[str] = []
     suggestions: list[str] = []
-    policy_id: int | None = None
+    policy_id: str | None = None
     rules_count: int | None = None
     error: str = ""
 
@@ -761,7 +729,6 @@ class ZipUploadResult(BaseModel):
 @router.post("/upload-zip")
 async def upload_policy_zip(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """
@@ -798,6 +765,7 @@ async def upload_policy_zip(
                 detail=f"ZIP file too large. Maximum size is {max_mb} MB.",
             )
         chunks_data.append(chunk)
+
     zip_bytes = b"".join(chunks_data)
 
     # Extract and upload all files to Supabase Storage
@@ -842,13 +810,13 @@ async def upload_policy_zip(
         except Exception as e:
             logger.error("Validation error for %s: %s", ef.filename, e)
             result["error"] = f"Validation failed: {e}"
-            db.add(AuditLog(
+            AuditLog(
                 action_type="policy_zip_validation_error",
                 entity_type="policy",
+                entity_id="0",
                 performed_by=current_user.email,
-                meta={"zip_filename": file.filename, "file": ef.filename, "error": str(e)},
-            ))
-            db.commit()
+                meta_data={"zip_filename": file.filename, "file": ef.filename, "error": str(e)},
+            ).save()
             results.append(result)
             continue
 
@@ -862,36 +830,35 @@ async def upload_policy_zip(
         if not validation.is_compliant:
             # Log the rejection with AI suggestions
             logger.info("Policy non-compliant: file=%s score=%.2f", ef.filename, validation.compliance_score)
-            db.add(AuditLog(
+            AuditLog(
                 action_type="policy_zip_validation_failed",
                 entity_type="policy",
+                entity_id="0",
                 performed_by=current_user.email,
-                meta={
+                meta_data={
                     "zip_filename": file.filename,
                     "file": ef.filename,
                     "compliance_score": validation.compliance_score,
                     "issues": validation.issues,
                 },
-            ))
-            db.add(Notification(
+            ).save()
+            Notification(
                 type="warning",
                 title="Policy not compliant",
                 body=f'"{ef.filename}" from "{file.filename}" did not pass compliance check (score: {validation.compliance_score:.0%}). Review AI suggestions.',
                 read=False,
-            ))
-            db.commit()
+            ).save()
             results.append(result)
             continue
 
         # ── Compliant: push to DB ────────────────────────────────────────────────
         policy_name = Path(ef.filename).stem
-        existing = db.query(Policy).filter(Policy.name == policy_name).all()
+        existing = Policy.objects(name=policy_name)
         if existing:
-            max_version = (
-                db.query(func.max(Policy.version)).filter(Policy.name == policy_name).scalar() or 0
-            )
+            max_version = max([p.version for p in existing]) if existing else 0
             for p in existing:
                 p.is_active = False
+                p.save()
             policy_obj = Policy(
                 name=policy_name,
                 version=max_version + 1,
@@ -907,15 +874,13 @@ async def upload_policy_zip(
                 source_zip=file.filename,
                 storage_path=ef.storage_path,
             )
-        db.add(policy_obj)
-        db.flush()
-
         policy_obj.extracted_text = ef.text_content
+        policy_obj.save()
 
         # Extract rules with timeout fallback
         rule_dicts: list[dict] = []
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future_rules = executor.submit(extract_rules_from_text, ef.text_content, policy_obj.id)
+            future_rules = executor.submit(extract_rules_from_text, ef.text_content, str(policy_obj.id))
             try:
                 rule_dicts = future_rules.result(timeout=UPLOAD_PROCESS_TIMEOUT)
             except FuturesTimeoutError:
@@ -925,22 +890,22 @@ async def upload_policy_zip(
                 logger.warning("ZIP upload: rule extraction failed for %s: %s", ef.filename, e)
                 rule_dicts = _fallback_rules_from_text(ef.text_content)
 
+        stored_rules = []
         for rd in rule_dicts:
             try:
                 validated = validate_rule_data(rd)
             except ValueError:
                 continue
             rule = Rule(
-                policy_id=policy_obj.id,
+                policy_id=policy_obj,
                 rule_data=validated,
                 severity=rd.get("severity") or "medium",
             )
-            db.add(rule)
-
-        db.flush()
+            rule.save()
+            stored_rules.append(rule)
 
         # Background RAG indexing
-        _policy_id_ref = policy_obj.id
+        _policy_id_ref = str(policy_obj.id)
         _policy_name_ref = policy_name
         _text_ref = ef.text_content
 
@@ -952,14 +917,12 @@ async def upload_policy_zip(
 
         threading.Thread(target=_index_bg, daemon=True).start()
 
-        stored_rules = db.query(Rule).filter(Rule.policy_id == policy_obj.id).order_by(Rule.id).all()
-
-        db.add(AuditLog(
+        AuditLog(
             action_type="policy_zip_uploaded",
             entity_type="policy",
-            entity_id=policy_obj.id,
+            entity_id=str(policy_obj.id),
             performed_by=current_user.email,
-            meta={
+            meta_data={
                 "zip_filename": file.filename,
                 "policy_name": policy_name,
                 "file": ef.filename,
@@ -967,16 +930,15 @@ async def upload_policy_zip(
                 "compliance_score": validation.compliance_score,
                 "storage_path": ef.storage_path,
             },
-        ))
-        db.add(Notification(
+        ).save()
+        Notification(
             type="success",
             title="Policy approved & added",
             body=f'"{policy_name}" from "{file.filename}" passed compliance ({validation.compliance_score:.0%}) and was added with {len(stored_rules)} rules.',
             read=False,
-        ))
-        db.commit()
+        ).save()
 
-        result["policy_id"] = policy_obj.id
+        result["policy_id"] = str(policy_obj.id)
         result["rules_count"] = len(stored_rules)
         logger.info(
             "ZIP policy accepted: file=%s policy_id=%s score=%.2f rules=%s",

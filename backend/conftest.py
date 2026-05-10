@@ -5,10 +5,8 @@ import tempfile
 
 import pytest
 
-# Use file-based SQLite so all connections share the same DB (in-memory can differ per connection)
-_test_db_dir = tempfile.gettempdir()
-_test_db_path = os.path.join(_test_db_dir, "ai_compliance_backend_test.sqlite")
-os.environ["DATABASE_URL"] = os.environ.get("DATABASE_URL", f"sqlite:///{_test_db_path}")
+# Use a test MongoDB database
+os.environ["DATABASE_URL"] = os.environ.get("DATABASE_URL", "mongodb://localhost:27017/compliance_backend_test")
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "sk-test-dummy-for-pytest")
 os.environ["USE_LOCAL_EMBEDDINGS"] = os.environ.get("USE_LOCAL_EMBEDDINGS", "true")
 

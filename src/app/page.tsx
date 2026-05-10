@@ -30,10 +30,10 @@ export default function LandingPage() {
             <a href="#how-it-works" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
               How It Works
             </a>
-            <Link href="/login">
-              <Button variant="ghost">Sign in</Button>
+            <Link href="/dashboard">
+              <Button variant="ghost">Dashboard</Button>
             </Link>
-            <Link href="/login">
+            <Link href="/dashboard">
               <Button>Get Started</Button>
             </Link>
           </nav>
@@ -53,9 +53,9 @@ export default function LandingPage() {
             Automate policy analysis and rule extraction with AI. Monitor compliance in real time, reduce risk, and keep your organization audit-ready.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4 animate-fade-in">
-            <Link href="/login">
+            <Link href="/dashboard">
               <Button size="lg" variant="gradient" className="gap-2">
-                Get Started
+                Go to Dashboard
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </Link>
@@ -161,7 +161,7 @@ export default function LandingPage() {
           <div className="flex gap-6 text-sm text-muted-foreground">
             <a href="#features" className="hover:text-foreground">Features</a>
             <a href="#how-it-works" className="hover:text-foreground">How It Works</a>
-            <Link href="/login" className="hover:text-foreground">Sign in</Link>
+            <Link href="/dashboard" className="hover:text-foreground">Dashboard</Link>
           </div>
         </div>
         <p className="mx-auto mt-8 max-w-6xl text-center text-xs text-muted-foreground">

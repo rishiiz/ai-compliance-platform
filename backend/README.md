@@ -5,10 +5,10 @@ FastAPI backend for the AI compliance monitoring platform.
 ## Prerequisites
 
 - Python 3.11+
-- PostgreSQL (for `DATABASE_URL`); create the database first:
-  ```sql
-  CREATE DATABASE compliance_db;
-  ```
+- MongoDB (for `DATABASE_URL`)
+  - **Windows 10 Install:** Download and install [MongoDB Community Server](https://www.mongodb.com/try/download/community). During install, ensure "Install MongoDB as a Service" is checked.
+  - Alternatively, use a free cluster on [MongoDB Atlas](https://www.mongodb.com/cloud/atlas).
+  - Default connection: `mongodb://localhost:27017/compliance_db`
 
 ## Setup
 
@@ -31,7 +31,7 @@ FastAPI backend for the AI compliance monitoring platform.
 
 3. **Configure environment**:
    - Copy `.env.example` to `.env`
-   - Set `DATABASE_URL` (PostgreSQL) and `OPENAI_API_KEY` in `.env`
+   - Set `DATABASE_URL` (MongoDB) and `OPENAI_API_KEY` (if using OpenAI for embeddings) in `.env`
    ```bash
    copy .env.example .env   # Windows
    # cp .env.example .env   # macOS/Linux
@@ -55,10 +55,10 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ## Run the backend with RAG (Ask policy + Llama 3.3 70B)
 
 1. **Prerequisites**
-   - PostgreSQL running; database `compliance_db` created.
+   - MongoDB running (locally or Atlas).
    - `.env` in the **backend** folder with:
-     - `DATABASE_URL` (PostgreSQL connection string)
-     - `OPENAI_API_KEY` (for RAG embeddings: indexing and search)
+     - `DATABASE_URL` (MongoDB connection string, e.g. `mongodb://localhost:27017/compliance_db`)
+     - `OPENAI_API_KEY` (if not using local embeddings)
      - `GROQ_API_KEY` (for answers: Llama 3.3 70B)
      - Optional: `GROQ_MODEL=llama-3.3-70b-versatile`
 
@@ -143,7 +143,7 @@ From the **backend** directory:
 python -m pytest tests/ -v --tb=short
 ```
 
-Health, RAG, and endpoint tests are in `tests/test_health.py`, `tests/test_rag.py`, and `tests/test_new_endpoints.py`. Tests use SQLite and `USE_LOCAL_EMBEDDINGS=true`; no real PostgreSQL or OpenAI needed. First run may take 1–2 min if RAG/Chroma load.
+Health, RAG, and endpoint tests are in `tests/test_health.py`, `tests/test_rag.py`, and `tests/test_new_endpoints.py`. Tests use a test MongoDB database and `USE_LOCAL_EMBEDDINGS=true`; no real OpenAI needed. First run may take 1–2 min if RAG/Chroma load.
 
 With warnings treated as errors:
 
@@ -160,7 +160,7 @@ pytest tests/ -v -W error
 
 ## Final version (tested)
 
-- **Tests:** 44/44 passing (pytest).
+- **Tests:** Passing (pytest).
 - **Endpoints:** Health, auth (login, me, 2FA), profile/activity, users, policy (list, upload, ask, reindex), rules, violations, dashboard, scan, settings, reports, audit, notifications.
-- **Dependencies:** See `requirements.txt` (includes FastAPI, SQLAlchemy, psycopg2-binary, chromadb, tiktoken, PyMuPDF, openai, etc.).
-- **Run:** `uvicorn app.main:app --host 0.0.0.0 --port 8000` (ensure PostgreSQL is running and `.env` is configured).
+- **Dependencies:** See `requirements.txt` (includes FastAPI, MongoEngine, pymongo, chromadb, tiktoken, PyMuPDF, openai, etc.).
+- **Run:** `uvicorn app.main:app --host 0.0.0.0 --port 8000` (ensure MongoDB is running and `.env` is configured).

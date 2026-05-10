@@ -1,20 +1,16 @@
 """Audit log model."""
 
-from sqlalchemy import Column, DateTime, Integer, JSON, String
-from sqlalchemy.sql import func
-
-from app.database import Base
+from datetime import datetime, timezone
+import mongoengine as me
 
 
-class AuditLog(Base):
+class AuditLog(me.Document):
     """Audit log table for tracking policy, rule, and violation actions."""
+    meta = {'collection': 'audit_logs'}
 
-    __tablename__ = "audit_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    action_type = Column(String(64), nullable=False)
-    entity_type = Column(String(32), nullable=False)  # policy, rule, violation
-    entity_id = Column(Integer, nullable=False)
-    performed_by = Column(String(255), nullable=True)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    meta = Column(JSON, nullable=True)  # JSON works on SQLite and PostgreSQL; "metadata" is reserved by Declarative
+    action_type = me.StringField(max_length=64, required=True)
+    entity_type = me.StringField(max_length=32, required=True)  # policy, rule, violation
+    entity_id = me.StringField(required=True)  # Using StringField since ObjectId translates to string
+    performed_by = me.StringField(max_length=255, null=True)
+    timestamp = me.DateTimeField(default=lambda: datetime.now(timezone.utc))
+    meta_data = me.DictField(null=True, db_field="meta")  # meta is reserved in mongoengine Document

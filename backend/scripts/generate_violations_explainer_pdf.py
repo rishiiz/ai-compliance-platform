@@ -77,7 +77,7 @@ def main() -> None:
         Spacer(1, 0.2 * inch),
         Paragraph("Why the list might be empty", h2_style),
         Paragraph(
-            "If no database is connected, or no scan has been run, or no database rows currently fail any rule, the Violations section will show \"No violations yet.\" To see violations in the demo: connect a PostgreSQL database with tables that match your rules (e.g. employees with training_completed, date_of_joining), then run a scan from the Dashboard.",
+            "If no database is connected, or no scan has been run, or no database rows currently fail any rule, the Violations section will show \"No violations yet.\" To see violations in the demo: connect an External database with tables that match your rules (e.g. employees with training_completed, date_of_joining), then run a scan from the Dashboard.",
             body_style,
         ),
     ]

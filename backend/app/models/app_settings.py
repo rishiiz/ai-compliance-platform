@@ -1,15 +1,11 @@
 """App settings (key-value) for system, notifications, policy, user prefs."""
 
-from sqlalchemy import Column, Integer, String, Text
-
-from app.database import Base
+import mongoengine as me
 
 
-class AppSettings(Base):
+class AppSettings(me.Document):
     """Key-value store for settings (scan_frequency, severity_threshold, etc.)."""
+    meta = {'collection': 'app_settings'}
 
-    __tablename__ = "app_settings"
-
-    id = Column(Integer, primary_key=True, index=True)
-    key = Column(String(128), unique=True, nullable=False, index=True)
-    value = Column(Text, nullable=True)
+    key = me.StringField(max_length=128, unique=True, required=True)
+    value = me.StringField(null=True)

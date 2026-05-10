@@ -280,7 +280,7 @@ def _chunk_by_tokens(text: str, max_tokens: int, overlap_tokens: int) -> list[st
 
 def chunk_policy_text(
     extracted_text: str,
-    policy_id: int,
+    policy_id: str,
     policy_name: str,
 ) -> list[dict]:
     """
@@ -317,7 +317,7 @@ def chunk_policy_text(
 
 def index_policy_chunks(
     extracted_text: str,
-    policy_id: int,
+    policy_id: str,
     policy_name: str,
 ) -> bool:
     """
@@ -363,7 +363,7 @@ def index_policy_chunks(
     return True
 
 
-def delete_policy_from_index(policy_id: int) -> None:
+def delete_policy_from_index(policy_id: str) -> None:
     """Remove all chunks for the given policy_id from RAG storage (Chroma or MySQL)."""
     backend = (getattr(settings, "RAG_STORAGE_BACKEND", None) or "chroma").strip().lower()
     if backend == "mysql":
@@ -452,7 +452,7 @@ def _embed_query_with_cache(query: str) -> list[float] | None:
 def retrieve(
     query: str,
     top_k: int | None = None,
-    policy_id: int | None = None,
+    policy_id: str | None = None,
     use_summaries_only: bool = False,
 ) -> list[dict]:
     """

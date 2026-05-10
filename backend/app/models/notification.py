@@ -1,19 +1,15 @@
 """Notification model for in-app notifications (bell dropdown)."""
 
-from sqlalchemy import Column, Boolean, DateTime, Integer, String
-from sqlalchemy.sql import func
-
-from app.database import Base
+from datetime import datetime, timezone
+import mongoengine as me
 
 
-class Notification(Base):
+class Notification(me.Document):
     """In-app notifications (e.g. new violation, policy review due)."""
+    meta = {'collection': 'notifications'}
 
-    __tablename__ = "notifications"
-
-    id = Column(Integer, primary_key=True, index=True)
-    type = Column(String(32), nullable=False)  # critical, warning, success, info
-    title = Column(String(255), nullable=False)
-    body = Column(String(1024), nullable=True)
-    read = Column(Boolean, nullable=False, server_default="0")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    type = me.StringField(max_length=32, required=True)  # critical, warning, success, info
+    title = me.StringField(max_length=255, required=True)
+    body = me.StringField(max_length=1024, null=True)
+    read = me.BooleanField(default=False)
+    created_at = me.DateTimeField(default=lambda: datetime.now(timezone.utc))

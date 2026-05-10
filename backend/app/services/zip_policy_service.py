@@ -31,26 +31,19 @@ class ExtractedFile:
 
 def _upload_to_db_storage(storage_path: str, data: bytes, content_type: str) -> str:
     """
-    Store file bytes in the app database (MySQL/PostgreSQL). Used when Supabase is not configured.
+    Store file bytes in the app database (MongoDB). Used when Supabase is not configured.
     Returns a relative URL path for download, e.g. /api/v1/files/download/123.
     """
     try:
-        from app.database import SessionLocal
-        from app.models import PolicyFileStorage
+        from app.models.policy_file_storage import PolicyFileStorage
 
-        session = SessionLocal()
-        try:
-            row = PolicyFileStorage(
-                storage_path=storage_path[:1024],
-                content_type=content_type,
-                data=data,
-            )
-            session.add(row)
-            session.commit()
-            session.refresh(row)
-            return f"/files/download/{row.id}"
-        finally:
-            session.close()
+        row = PolicyFileStorage(
+            storage_path=storage_path[:1024],
+            content_type=content_type,
+            data=data,
+        )
+        row.save()
+        return f"/files/download/{str(row.id)}"
     except Exception as e:
         logger.warning("DB storage upload failed for %s: %s", storage_path, e)
         return ""
@@ -206,7 +199,7 @@ def extract_and_upload_zip(
                 else:
                     text = _extract_text_from_txt(raw)
 
-                # Upload: Supabase if configured, else app database (MySQL/PostgreSQL)
+                # Upload: Supabase if configured, else app database (MongoDB)
                 storage_path = f"{zip_stem}/{basename}"
                 ct = _content_type_for_ext(ext)
                 storage_url = _upload_to_supabase_storage(storage_path, raw, ct)
